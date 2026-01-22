@@ -1,8 +1,9 @@
 import torch
 import torchvision.transforms as transforms
 from PIL import Image
-from fastapi import FastAPI, File, UploadFile
+from fastapi import FastAPI, UploadFile, File, Form
 import io
+import torch.nn.functional as F
 
 from models.tea_model import TeaNet
 
@@ -10,6 +11,7 @@ from models.tea_model import TeaNet
 app = FastAPI()
 
 # model config
+MODEL_VERSION = "1.0.0"
 MODEL_PATH = "saved_models/tea_grading_model.pth"
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -33,7 +35,14 @@ transform = transforms.Compose([
 
 # prediction endpoint
 @app.post("/predict")
-async def predict(file: UploadFile = File(...)):
+async def predict(
+    file: UploadFile = File(...),
+    aroma: int = Form(..., ge=1, le=7),
+    taste: int = Form(..., ge=1, le=7),
+    afterTaste: int = Form(..., ge=1, le=7),
+    color: int = Form(..., ge=1, le=7),
+    acceptability: int = Form(..., ge=1, le=7)
+):
     try:
         # read image
         contents = await file.read()
@@ -46,9 +55,17 @@ async def predict(file: UploadFile = File(...)):
         with torch.no_grad():
             grade_out, quality_out = model(image)
 
+            # apply softmax to get probabilities
+            grade_probs = F.softmax(grade_out, dim=1)
+            quality_probs = F.softmax(quality_out, dim=1)
+
             # get prediction indices
-            grade_pred = torch.argmax(grade_out, dim=1).item()
-            quality_pred = torch.argmax(quality_out, dim=1).item()
+            grade_pred = torch.argmax(grade_probs, dim=1).item()
+            quality_pred = torch.argmax(quality_probs, dim=1).item()
+
+            # get confidence values
+            grade_conf = grade_probs[0][grade_pred].item()
+            quality_conf = quality_probs[0][quality_pred].item()
 
         # convert indices to labels
         grade_label = GRADE_LABELS[grade_pred]
@@ -59,9 +76,15 @@ async def predict(file: UploadFile = File(...)):
             "success": True,
             "response": {
                 "status": 200,
+                "model": {
+                    "version": MODEL_VERSION,
+                    "device": str(DEVICE)
+                },
                 "data": {
                     "grade": grade_label,
-                    "quality": quality_label
+                    "grade_confidence": round(grade_conf, 4),
+                    "quality": quality_label,
+                    "quality_confidence": round(quality_conf, 4)
                 }
             }
         }
