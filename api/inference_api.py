@@ -11,16 +11,16 @@ from models.tea_model import TeaNet
 app = FastAPI()
 
 # model config
-MODEL_VERSION = "1.0.0"
-MODEL_PATH = "saved_models/tea_grading_model.pth"
+MODEL_VERSION = "3.0.0"
+MODEL_PATH = "saved_models/tea_grading_model_v3.pth"
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 # class labels
-GRADE_LABELS = ["OP", "OP1", "OPA"]
+GRADE_LABELS = ["OP", "OP1", "OPA", "NOT_TEA"]
 QUALITY_LABELS = [str(i) for i in range(1, 11)]
 
 # load trained model
-model = TeaNet(num_grades=3, num_qualities=10)
+model = TeaNet(num_grades=4, num_qualities=10)
 model.load_state_dict(torch.load(MODEL_PATH, map_location=DEVICE))
 model.to(DEVICE)
 model.eval()
@@ -44,9 +44,25 @@ async def predict(
     acceptability: int = Form(..., ge=1, le=7)
 ):
     try:
-        # read image
+        # read the image
         contents = await file.read()
         image = Image.open(io.BytesIO(contents)).convert("RGB")
+
+        # check image quality
+        if image.width < 100 or image.height < 100:
+            return {
+                "success": False,
+                "response": {
+                    "status": 400,
+                    "model": {
+                        "version": MODEL_VERSION,
+                        "device": str(DEVICE)
+                    },
+                    "data": {
+                        "message": "Image resolution is too low for grading!",
+                    }
+                }
+            }
 
         # preprocess
         image = transform(image).unsqueeze(0).to(DEVICE)
@@ -71,6 +87,39 @@ async def predict(
         grade_label = GRADE_LABELS[grade_pred]
         quality_label = QUALITY_LABELS[quality_pred]
 
+        # check for invalid images
+        if grade_label == "NOT_TEA" and grade_conf > 0.7:            
+            return {
+                "success": False,
+                "response": {
+                    "status": 400,
+                    "model": {
+                        "version": MODEL_VERSION,
+                        "device": str(DEVICE)
+                    },
+                    "data": {
+                        "message": "Uploaded image is not a valid tea sample!",
+                        "grade_confidence": round(grade_conf, 4)
+                    }
+                }
+            }
+        
+        if grade_label == "NOT_TEA":
+            return {
+                "success": False,
+                "response": {
+                    "status": 400,
+                    "model": {
+                        "version": MODEL_VERSION,
+                        "device": str(DEVICE)
+                    },
+                    "data": {
+                        "message": "Low confidence NOT_TEA -> treating as tea sample",
+                        "grade_confidence": round(grade_conf, 4)
+                    }
+                }
+            }
+
         # success response
         return {
             "success": True,
@@ -94,7 +143,7 @@ async def predict(
         return {
             "success": False,
             "response": {
-                "status": 401,
+                "status": 500,
                 "data": {
                     "message": str(e)
                 }

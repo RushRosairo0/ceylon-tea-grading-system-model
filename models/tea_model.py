@@ -9,7 +9,7 @@ class TeaNet(nn.Module):
         super(TeaNet, self).__init__()
 
         # load pre-trained ResNet18 backbone
-        self.backbone = models.resnet18(pretrained=False)
+        self.backbone = models.resnet18(pretrained=True)
 
         in_features = self.backbone.fc.in_features
         self.backbone.fc = nn.Identity()
@@ -18,7 +18,7 @@ class TeaNet(nn.Module):
         self.grade_head = nn.Linear(in_features, num_grades)
         self.quality_head = nn.Linear(in_features, num_qualities)
 
-    # passto the network
+    # pass to the network
     def forward(self, x):
         # extract features using ResNet18 backbone
         features = self.backbone(x)
